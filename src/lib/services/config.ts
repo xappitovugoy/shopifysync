@@ -1,16 +1,37 @@
 import { db } from "@/lib/db"
 
-export interface ConfigItem {
-  key: string
-  value: string
-  description?: string
-  createdAt: Date
-  updatedAt: Date
+export interface AppConfig {
+  shopify: {
+    storeName: string
+    accessToken: string
+    apiVersion: string
+  }
+  email: {
+    host: string
+    port: number
+    user: string
+    pass: string
+    from: string
+    recipients: string[]
+  }
+  google: {
+    clientId: string
+    clientSecret: string
+    redirectUri: string
+  }
+  sync: {
+    lowStockThreshold: number
+    autoSyncEnabled: boolean
+    autoSyncInterval: string
+    emailNotifications: boolean
+  }
 }
 
 export class ConfigService {
   private static instance: ConfigService
-  private cache: Map<string, string> = new Map()
+  private cache: Map<string, any> = new Map()
+  private cacheExpiry: Map<string, number> = new Map()
+  private readonly CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
   private constructor() {}
 
@@ -21,163 +42,236 @@ export class ConfigService {
     return ConfigService.instance
   }
 
-  async get(key: string, defaultValue?: string): Promise<string | undefined> {
-    // Check cache first
-    if (this.cache.has(key)) {
-      return this.cache.get(key)
-    }
-
+  async getConfig(): Promise<AppConfig> {
     try {
-      const config = await db.configuration.findUnique({
-        where: { key }
-      })
-
-      if (config) {
-        this.cache.set(key, config.value)
-        return config.value
-      }
-
-      return defaultValue
-    } catch (error) {
-      console.error(`Error getting config ${key}:`, error)
-      return defaultValue
-    }
-  }
-
-  async set(key: string, value: string, description?: string): Promise<void> {
-    try {
-      const existingConfig = await db.configuration.findUnique({
-        where: { key }
-      })
-
-      if (existingConfig) {
-        await db.configuration.update({
-          where: { key },
-          data: {
-            value,
-            description
-          }
-        })
-      } else {
-        await db.configuration.create({
-          data: {
-            key,
-            value,
-            description
-          }
-        })
-      }
-
-      // Update cache
-      this.cache.set(key, value)
-    } catch (error) {
-      console.error(`Error setting config ${key}:`, error)
-      throw new Error(`Failed to set config ${key}`)
-    }
-  }
-
-  async getNumber(key: string, defaultValue?: number): Promise<number | undefined> {
-    const value = await this.get(key)
-    if (value === undefined) return defaultValue
-    
-    const num = parseFloat(value)
-    return isNaN(num) ? defaultValue : num
-  }
-
-  async getBoolean(key: string, defaultValue?: boolean): Promise<boolean | undefined> {
-    const value = await this.get(key)
-    if (value === undefined) return defaultValue
-    
-    return value.toLowerCase() === "true" || value === "1"
-  }
-
-  async getJSON<T>(key: string, defaultValue?: T): Promise<T | undefined> {
-    const value = await this.get(key)
-    if (value === undefined) return defaultValue
-    
-    try {
-      return JSON.parse(value) as T
-    } catch (error) {
-      console.error(`Error parsing JSON config ${key}:`, error)
-      return defaultValue
-    }
-  }
-
-  async getAll(): Promise<ConfigItem[]> {
-    try {
-      const configs = await db.configuration.findMany({
-        orderBy: {
-          key: "asc"
+      const configs = await db.configuration.findMany()
+      
+      const configMap = new Map(configs.map(c => [c.key, c.value]))
+      
+      return {
+        shopify: {
+          storeName: configMap.get("shopify_store_name") || "",
+          accessToken: configMap.get("shopify_access_token") || "",
+          apiVersion: configMap.get("shopify_api_version") || "2024-01"
+        },
+        email: {
+          host: configMap.get("email_host") || "smtp.gmail.com",
+          port: parseInt(configMap.get("email_port") || "587"),
+          user: configMap.get("email_user") || "",
+          pass: configMap.get("email_pass") || "",
+          from: configMap.get("email_from") || "",
+          recipients: configMap.get("email_recipients") 
+            ? configMap.get("email_recipients").split(",").map(r => r.trim())
+            : []
+        },
+        google: {
+          clientId: configMap.get("google_client_id") || "",
+          clientSecret: configMap.get("google_client_secret") || "",
+          redirectUri: configMap.get("google_redirect_uri") || ""
+        },
+        sync: {
+          lowStockThreshold: parseInt(configMap.get("sync_low_stock_threshold") || "10"),
+          autoSyncEnabled: configMap.get("sync_auto_enabled") === "true",
+          autoSyncInterval: configMap.get("sync_auto_interval") || "0 */6 * * *",
+          emailNotifications: configMap.get("sync_email_notifications") === "true"
         }
-      })
-
-      // Update cache
-      configs.forEach(config => {
-        this.cache.set(config.key, config.value)
-      })
-
-      return configs
+      }
     } catch (error) {
-      console.error("Error getting all configs:", error)
-      return []
+      console.error("Error getting configuration:", error)
+      throw new Error("Failed to get configuration")
     }
   }
 
-  async delete(key: string): Promise<void> {
+  async updateConfig(updates: Partial<AppConfig>): Promise<AppConfig> {
     try {
-      await db.configuration.delete({
-        where: { key }
-      })
+      const operations = []
 
-      // Remove from cache
-      this.cache.delete(key)
+      if (updates.shopify) {
+        if (updates.shopify.storeName !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "shopify_store_name" },
+              update: { value: updates.shopify.storeName },
+              create: { key: "shopify_store_name", value: updates.shopify.storeName, description: "Shopify store name" }
+            })
+          )
+        }
+        if (updates.shopify.accessToken !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "shopify_access_token" },
+              update: { value: updates.shopify.accessToken },
+              create: { key: "shopify_access_token", value: updates.shopify.accessToken, description: "Shopify access token" }
+            })
+          )
+        }
+        if (updates.shopify.apiVersion !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "shopify_api_version" },
+              update: { value: updates.shopify.apiVersion },
+              create: { key: "shopify_api_version", value: updates.shopify.apiVersion, description: "Shopify API version" }
+            })
+          )
+        }
+      }
+
+      if (updates.email) {
+        if (updates.email.host !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "email_host" },
+              update: { value: updates.email.host },
+              create: { key: "email_host", value: updates.email.host, description: "Email SMTP host" }
+            })
+          )
+        }
+        if (updates.email.port !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "email_port" },
+              update: { value: updates.email.port.toString() },
+              create: { key: "email_port", value: updates.email.port.toString(), description: "Email SMTP port" }
+            })
+          )
+        }
+        if (updates.email.user !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "email_user" },
+              update: { value: updates.email.user },
+              create: { key: "email_user", value: updates.email.user, description: "Email username" }
+            })
+          )
+        }
+        if (updates.email.pass !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "email_pass" },
+              update: { value: updates.email.pass },
+              create: { key: "email_pass", value: updates.email.pass, description: "Email password" }
+            })
+          )
+        }
+        if (updates.email.from !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "email_from" },
+              update: { value: updates.email.from },
+              create: { key: "email_from", value: updates.email.from, description: "Email from address" }
+            })
+          )
+        }
+        if (updates.email.recipients !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "email_recipients" },
+              update: { value: updates.email.recipients.join(",") },
+              create: { key: "email_recipients", value: updates.email.recipients.join(","), description: "Email recipients (comma separated)" }
+            })
+          )
+        }
+      }
+
+      if (updates.google) {
+        if (updates.google.clientId !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "google_client_id" },
+              update: { value: updates.google.clientId },
+              create: { key: "google_client_id", value: updates.google.clientId, description: "Google client ID" }
+            })
+          )
+        }
+        if (updates.google.clientSecret !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "google_client_secret" },
+              update: { value: updates.google.clientSecret },
+              create: { key: "google_client_secret", value: updates.google.clientSecret, description: "Google client secret" }
+            })
+          )
+        }
+        if (updates.google.redirectUri !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "google_redirect_uri" },
+              update: { value: updates.google.redirectUri },
+              create: { key: "google_redirect_uri", value: updates.google.redirectUri, description: "Google redirect URI" }
+            })
+          )
+        }
+      }
+
+      if (updates.sync) {
+        if (updates.sync.lowStockThreshold !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "sync_low_stock_threshold" },
+              update: { value: updates.sync.lowStockThreshold.toString() },
+              create: { key: "sync_low_stock_threshold", value: updates.sync.lowStockThreshold.toString(), description: "Low stock threshold" }
+            })
+          )
+        }
+        if (updates.sync.autoSyncEnabled !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "sync_auto_enabled" },
+              update: { value: updates.sync.autoSyncEnabled.toString() },
+              create: { key: "sync_auto_enabled", value: updates.sync.autoSyncEnabled.toString(), description: "Auto sync enabled" }
+            })
+          )
+        }
+        if (updates.sync.autoSyncInterval !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "sync_auto_interval" },
+              update: { value: updates.sync.autoSyncInterval },
+              create: { key: "sync_auto_interval", value: updates.sync.autoSyncInterval, description: "Auto sync interval (cron expression)" }
+            })
+          )
+        }
+        if (updates.sync.emailNotifications !== undefined) {
+          operations.push(
+            db.configuration.upsert({
+              where: { key: "sync_email_notifications" },
+              update: { value: updates.sync.emailNotifications.toString() },
+              create: { key: "sync_email_notifications", value: updates.sync.emailNotifications.toString(), description: "Email notifications enabled" }
+            })
+          )
+        }
+      }
+
+      await Promise.all(operations)
+      
+      // Clear cache
+      this.cache.clear()
+      this.cacheExpiry.clear()
+
+      return await this.getConfig()
     } catch (error) {
-      console.error(`Error deleting config ${key}:`, error)
-      throw new Error(`Failed to delete config ${key}`)
+      console.error("Error updating configuration:", error)
+      throw new Error("Failed to update configuration")
     }
   }
 
-  async exists(key: string): Promise<boolean> {
-    try {
-      const config = await db.configuration.findUnique({
-        where: { key }
-      })
-      return config !== null
-    } catch (error) {
-      console.error(`Error checking config existence ${key}:`, error)
-      return false
-    }
+  async getShopifyConfig() {
+    const config = await this.getConfig()
+    return config.shopify
   }
 
-  clearCache(): void {
-    this.cache.clear()
+  async getEmailConfig() {
+    const config = await this.getConfig()
+    return config.email
   }
 
-  // Predefined configuration keys
-  static get KEYS() {
-    return {
-      // Email settings
-      EMAIL_RECIPIENTS: "email_recipients",
-      EMAIL_LOW_STOCK_THRESHOLD: "email_low_stock_threshold",
-      EMAIL_SYNC_REPORTS_ENABLED: "email_sync_reports_enabled",
-      
-      // Sync settings
-      SYNC_AUTO_ENABLED: "sync_auto_enabled",
-      SYNC_INTERVAL_HOURS: "sync_interval_hours",
-      SYNC_LOW_STOCK_THRESHOLD: "sync_low_stock_threshold",
-      
-      // Shopify settings
-      SHOPIFY_STORE_NAME: "shopify_store_name",
-      SHOPIFY_ACCESS_TOKEN: "shopify_access_token",
-      
-      // Google Sheets settings
-      GOOGLE_SHEETS_ENABLED: "google_sheets_enabled",
-      GOOGLE_SHEETS_FOLDER_ID: "google_sheets_folder_id",
-      
-      // General settings
-      APP_NAME: "app_name",
-      TIMEZONE: "timezone",
-      DATE_FORMAT: "date_format"
-    } as const
+  async getGoogleConfig() {
+    const config = await this.getConfig()
+    return config.google
+  }
+
+  async getSyncConfig() {
+    const config = await this.getConfig()
+    return config.sync
   }
 }

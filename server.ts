@@ -58,6 +58,35 @@ async function createCustomServer() {
       }
     });
 
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received, shutting down gracefully...');
+      try {
+        const scheduler = TaskScheduler.getInstance();
+        scheduler.stop();
+      } catch (error) {
+        console.error('Error stopping scheduler:', error);
+      }
+      server.close(() => {
+        console.log('Server closed');
+        process.exit(0);
+      });
+    });
+
+    process.on('SIGINT', () => {
+      console.log('SIGINT received, shutting down gracefully...');
+      try {
+        const scheduler = TaskScheduler.getInstance();
+        scheduler.stop();
+      } catch (error) {
+        console.error('Error stopping scheduler:', error);
+      }
+      server.close(() => {
+        console.log('Server closed');
+        process.exit(0);
+      });
+    });
+
   } catch (err) {
     console.error('Server startup error:', err);
     process.exit(1);
