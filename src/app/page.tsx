@@ -72,6 +72,11 @@ export default function Dashboard() {
   }, [])
 
   const checkAuth = async () => {
+    // Check if we're on the client side
+    if (typeof window === 'undefined') {
+      return
+    }
+    
     const token = localStorage.getItem("auth_token")
     const userData = localStorage.getItem("user")
     
@@ -105,6 +110,11 @@ export default function Dashboard() {
   }
 
   const fetchDashboardData = async () => {
+    // Check if we're on the client side
+    if (typeof window === 'undefined') {
+      return
+    }
+    
     const token = localStorage.getItem("auth_token")
     if (!token) return
 
@@ -129,12 +139,20 @@ export default function Dashboard() {
   }
 
   const handleLogout = () => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    
     localStorage.removeItem("auth_token")
     localStorage.removeItem("user")
     router.push("/login")
   }
 
   const handleSync = async () => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    
     const token = localStorage.getItem("auth_token")
     if (!token) return
 
@@ -159,6 +177,10 @@ export default function Dashboard() {
   }
 
   const handleExportGoogleSheets = async (type: "inventory" | "low-stock" = "inventory") => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    
     const token = localStorage.getItem("auth_token")
     if (!token) return
 
@@ -184,6 +206,10 @@ export default function Dashboard() {
   }
 
   const handleExportCSV = async () => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    
     const token = localStorage.getItem("auth_token")
     if (!token) return
 
@@ -209,6 +235,10 @@ export default function Dashboard() {
   }
 
   const handleSendLowStockAlert = async () => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    
     const token = localStorage.getItem("auth_token")
     if (!token) return
 
